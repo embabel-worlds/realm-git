@@ -123,14 +123,14 @@
     project: { type: string, description: "The repository: 'https://github.com/owner/repo', optionally '@<sha>'." }
     since: { type: string, default: "", description: "Only commits authored on or after this ISO-8601 date. Empty for all the history read." }
     under: { type: string, default: "", description: "Only paths starting with this. Empty for all." }
-    productionOnly: { type: boolean, default: false, description: "True to leave out test files." }
+    kind: { type: string, default: "", description: "Only files of this kind: source, test, docs, build, config, data or other. Empty for all; 'source' is production code." }
     limit: { type: int, default: 25, description: "How many files to return." }
   cypher: |
     MATCH (p:GitProject {key: $project})-[:HAS_COMMIT]->(c:GitCommit)
     WHERE c.isMerge = false AND c.authoredAt >= $since
     UNWIND range(0, size(c.paths) - 1) AS i
     WITH c, c.paths[i] AS path, c.fileKinds[i] AS kind
-    WHERE path STARTS WITH $under AND (NOT $productionOnly OR kind <> 'test')
+    WHERE path STARTS WITH $under AND ($kind = '' OR kind = $kind)
     RETURN path, kind, count(c) AS commits, count(DISTINCT c.authorEmail) AS people,
            sum(CASE WHEN c.authorKind IN ['assisted', 'agent'] THEN 1 ELSE 0 END) AS withAnAgent,
            max(c.authoredAt) AS lastChanged
