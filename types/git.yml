@@ -41,6 +41,8 @@
     committerEmail: "The committer's email."
     committedAt: "When it was committed, ISO-8601."
     coAuthors: { cardinality: LIST, description: "Co-Authored-By trailers, as written." }
+    agentEvidence: "What made the commit `assisted`: `trailer` (a Co-Authored-By naming an agent) or `message` (the message says an agent suggested, generated or wrote it). Empty otherwise."
+    changeRequestNumber: { type: int, description: "The pull request that brought the commit in, read from its title: the `(#123)` a squash merge appends, or `Merge pull request #123`. Empty when the title names none. With repositoryKey it is the ChangeRequest's key, `<repositoryKey>#<number>`." }
     parents: { cardinality: LIST, description: "Shas of the parent commits." }
     isMerge: { type: boolean, description: "True when it has more than one parent." }
     filesChanged: { type: int, description: "Files it touched against its first parent. Empty at the edge of the history read." }
@@ -99,5 +101,5 @@
     boundary: { type: boolean, description: "True when the commit is at the edge of the history read." }
     sourceUrl: "The commit's page on its host, where the host has one."
   virtualJoins:
-    - { anchorLabel: GitFile, relationship: HAS_BLAME, keyField: key, recordKeyField: anchorKey, producer: gitBlame, maxFanoutTotal: 20000,
+    - { anchorLabel: GitFile, relationship: HAS_BLAME, keyField: key, recordKeyField: anchorKey, producer: gitBlame, maxAnchors: 1200, maxFanoutTotal: 300000,
         description: "Who last changed each line: `MATCH (f:GitFile {key:$file})-[:HAS_BLAME]->(b:GitBlameRange)`." }

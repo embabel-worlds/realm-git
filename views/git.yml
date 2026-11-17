@@ -111,3 +111,28 @@
            b.authorKind AS authorKind, b.coAuthors AS coAuthors, b.authoredAt AS at, b.title AS title,
            b.message AS message, b.startLine AS fromLine, b.endLine AS toLine, b.boundary AS boundary,
            b.sourceUrl AS link
+
+- name: FileChurn
+  description: >-
+    SELECT THIS for "which files change most", "hotspots", "where is the churn", "which files do
+    the most people touch". The files of a repository by how many commits changed them over the
+    history read (a year by default), with how many people, how many of those commits a coding
+    agent helped with, and the latest change. Merge commits are not counted. A commit that touched
+    more than a hundred files contributes its first hundred.
+  params:
+    project: { type: string, description: "The repository: 'https://github.com/owner/repo', optionally '@<sha>'." }
+    since: { type: string, default: "", description: "Only commits authored on or after this ISO-8601 date. Empty for all the history read." }
+    under: { type: string, default: "", description: "Only paths starting with this. Empty for all." }
+    productionOnly: { type: boolean, default: false, description: "True to leave out test files." }
+    limit: { type: int, default: 25, description: "How many files to return." }
+  cypher: |
+    MATCH (p:GitProject {key: $project})-[:HAS_COMMIT]->(c:GitCommit)
+    WHERE c.isMerge = false AND c.authoredAt >= $since
+    UNWIND range(0, size(c.paths) - 1) AS i
+    WITH c, c.paths[i] AS path, c.fileKinds[i] AS kind
+    WHERE path STARTS WITH $under AND (NOT $productionOnly OR kind <> 'test')
+    RETURN path, kind, count(c) AS commits, count(DISTINCT c.authorEmail) AS people,
+           sum(CASE WHEN c.authorKind IN ['assisted', 'agent'] THEN 1 ELSE 0 END) AS withAnAgent,
+           max(c.authoredAt) AS lastChanged
+    ORDER BY commits DESC, path
+    LIMIT $limit
