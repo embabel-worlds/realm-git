@@ -63,10 +63,13 @@
     sourceUrl: "r.link"
 
 # Every commit that changed a run of lines, keyed by `<project>!<path>#<from>-<to>`: one method's
-# whole history, where blame gives only the last change to each line.
+# whole history, where blame gives only the last change to each line. It reads further back than
+# the other collections: a history cut short is a count that is too low, and the engine refuses to
+# rank on one.
 - name: gitHistory
   kind: git
   emit: history
+  maxCommits: 20000        # a method's history is only whole if the walk reaches the commit that wrote it; a commit that did not touch the file costs one lookup
   compute:
     key: "toLower(r.repository) + '@' + r.sha"
     title: "r.subject"
