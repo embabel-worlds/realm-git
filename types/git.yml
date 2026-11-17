@@ -3,6 +3,7 @@
 #
 #   GitProject ─HAS_COMMIT▶ GitCommit ─CHANGED▶ GitFileChange
 #   GitFile    ─HAS_BLAME▶  GitBlameRange
+#   GitLines   ─HAS_CHANGE▶ GitLineChange
 #
 # A project is pinned by `key`: a repository URL, optionally `@ref`, or a folder holding a `.git`
 # directory. A file is pinned by `<project>!<path>`.
@@ -20,6 +21,13 @@
   description: "One file of a git repository at the commit a project is read at. Pin it as one literal {key:'<project key>!<path from the repository root>'}, e.g. 'https://github.com/owner/repo@v2.1!src/main/java/com/acme/Cart.java', and traverse HAS_BLAME for who last changed each line."
   properties:
     key: { identity: true, description: "`<project key>!<path>`. Identity." }
+
+- name: GitLines
+  visibility: internal
+  userAnchor: false
+  description: "A run of consecutive lines of one file at the commit a project is read at: a method, a class, a block. Pin it as one literal {key:'<project key>!<path>#<from>-<to>'}, lines counted from 1 and both included, and traverse HAS_CHANGE for every commit that changed them. A code realm's declaration gives the lines: its fromLine and toLine."
+  properties:
+    key: { identity: true, description: "`<project key>!<path>#<from>-<to>`. Identity." }
 
 - name: GitCommit
   parents: [Commit]
@@ -103,3 +111,33 @@
   virtualJoins:
     - { anchorLabel: GitFile, relationship: HAS_BLAME, keyField: key, recordKeyField: anchorKey, producer: gitBlame, maxAnchors: 1200, maxFanoutTotal: 300000,
         description: "Who last changed each line: `MATCH (f:GitFile {key:$file})-[:HAS_BLAME]->(b:GitBlameRange)`." }
+
+- name: GitLineChange
+  visibility: internal
+  userAnchor: false
+  description: "One commit that changed a run of lines, with that commit: who wrote it, when, its message, its co-authors and authorKind, and how many of those lines it added and removed. Reached from (:GitLines {key:'<project>!<path>#<from>-<to>'})-[:HAS_CHANGE]->, newest first, back to the commit that first wrote the lines (`created`). The lines are followed through the edits that moved them and a rename of the file, along the first parent: on a branch that takes merge commits, a change is reported at the merge that brought it in. Counting these rows is how often a method changed; GitBlameRange says only who last changed each line."
+  properties:
+    id: { identity: true, description: "`<repository>@<commit read>!<path>#<from>-<to>@<sha>`. Identity." }
+    sha: "The commit."
+    shortSha: "The first seven characters of the hash."
+    key: "`<host>/<owner>/<repo>@<sha>`, lower-case repository: the dev vocabulary's Commit key, which realm-github carries on the same commit."
+    title: "The first line of the commit's message."
+    message: "Its whole message."
+    authorName: "Who wrote it."
+    authorEmail: "Their email as git recorded it."
+    authoredAt: "When, ISO-8601."
+    authorKind: { type: string, description: "human, bot, agent or assisted, by the dev vocabulary's rule over what git records.", values: [human, bot, agent, assisted] }
+    coAuthors: { cardinality: LIST, description: "Co-Authored-By trailers, as written." }
+    agentEvidence: "What made the commit `assisted`: `trailer` or `message`. Empty otherwise."
+    path: "The file's name in that commit, where it has been renamed since."
+    fromLine: { type: int, description: "Where the lines began in that commit's own text." }
+    toLine: { type: int, description: "Where they ended there." }
+    linesAdded: { type: int, description: "Lines the commit wrote among them." }
+    linesDeleted: { type: int, description: "Lines the commit removed from among them." }
+    created: { type: boolean, description: "True on the commit that first wrote the lines." }
+    boundary: { type: boolean, description: "True when the commit is at the edge of the history read." }
+    atSha: "The commit the lines were read at."
+    sourceUrl: "The commit's page on its host, where the host has one."
+  virtualJoins:
+    - { anchorLabel: GitLines, relationship: HAS_CHANGE, keyField: key, recordKeyField: anchorKey, producer: gitHistory, maxAnchors: 400, maxFanoutTotal: 40000,
+        description: "Every commit that changed these lines: `MATCH (l:GitLines {key:$lines})-[:HAS_CHANGE]->(c:GitLineChange)`." }

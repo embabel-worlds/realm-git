@@ -136,3 +136,20 @@
            max(c.authoredAt) AS lastChanged
     ORDER BY commits DESC, path
     LIMIT $limit
+
+- name: GitLineHistory
+  description: >-
+    SELECT THIS for "the history of this method", "every change to these lines", "how did this code
+    get to be the way it is", "who has changed this function". Every commit that changed a run of
+    lines of one file, newest first, back to the commit that first wrote them: who, when, whether
+    a coding agent helped, its message, and how many of the lines it added and removed. The lines
+    are followed through edits above them and a rename of the file. Give a method's first and last
+    line. Blame (GitBlame) shows only the last change to each line; this shows all of them.
+  params:
+    lines: { type: string, description: "'<project key>!<path>#<from>-<to>', lines counted from 1, e.g. 'https://github.com/owner/repo@<sha>!src/main/java/com/acme/Cart.java#40-72'." }
+  cypher: |
+    MATCH (l:GitLines {key: $lines})-[:HAS_CHANGE]->(c:GitLineChange)
+    RETURN c.shortSha AS commit, c.authoredAt AS at, c.authorName AS author, c.authorKind AS authorKind,
+           c.title AS title, c.linesAdded AS added, c.linesDeleted AS deleted, c.created AS created,
+           c.fromLine AS fromLine, c.toLine AS toLine, c.path AS path, c.sha AS sha, c.sourceUrl AS link
+    ORDER BY at DESC
