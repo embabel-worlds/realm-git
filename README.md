@@ -1,5 +1,7 @@
 # realm-git
 
+> **Experimental.** This realm is new and still changing: types, views and parameters may change without notice, and it has been run on few systems. Check its answers before relying on them.
+
 A git repository's history as a graph you can query, read from a clone when a question reaches it.
 Nothing is ingested and nothing is stored.
 
