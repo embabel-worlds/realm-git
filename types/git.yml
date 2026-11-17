@@ -135,6 +135,7 @@
     linesAdded: { type: int, description: "Lines the commit wrote among them." }
     linesDeleted: { type: int, description: "Lines the commit removed from among them." }
     created: { type: boolean, description: "True on the commit that first wrote the lines." }
+    complete: { type: boolean, description: "False when the walk ended where the history read ends, before the commit that wrote the lines: there are earlier changes this does not count. Empty on an appliance that does not report it." }
     boundary: { type: boolean, description: "True when the commit is at the edge of the history read." }
     atSha: "The commit the lines were read at."
     sourceUrl: "The commit's page on its host, where the host has one."
