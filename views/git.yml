@@ -1,0 +1,113 @@
+# Views over a git repository's history. `project` is a project key: a repository URL, optionally
+# '@<commit, tag or branch>', or a folder that holds a .git directory.
+
+- name: GitCommits
+  description: >-
+    SELECT THIS for "the recent commits in a repository", "who has been committing", "what changed
+    lately". The commits behind the one a project is read at, newest first: who wrote each and when,
+    whether a coding agent helped (authorKind), the first line of its message and how many files it
+    touched. The last 365 days of the 2,000 commits read.
+  params:
+    project: { type: string, description: "The project key: 'https://github.com/owner/repo', with '@<ref>' to read it at a commit, tag or branch, or a folder under the world's data/." }
+    limit: { type: int, default: 50, description: "How many commits to return, newest first." }
+  cypher: |
+    MATCH (p:GitProject {key: $project})-[:HAS_COMMIT]->(c:GitCommit)
+    RETURN c.shortSha AS commit, c.authoredAt AS at, c.authorName AS author, c.authorKind AS authorKind,
+           c.title AS title, c.filesChanged AS files, c.isMerge AS isMerge, c.sha AS sha, c.link AS link
+    ORDER BY at DESC
+    LIMIT $limit
+
+- name: GitCommitCharacter
+  description: >-
+    SELECT THIS for "what kind of change was each commit", "which commits were Java, which were
+    configuration or documentation", "classify the commits". Each commit characterised from the
+    files it touched, by name alone: `character` is the language when it touched only code in one
+    language (java, kotlin, typescript), else documentation, configuration, tests, build, 'code and
+    tests', or mixed; `kinds` are the dev vocabulary's file kinds it touched and `languages` the
+    code languages. `character` is 'unknown' at the edge of the history read. Counted by files, not
+    lines: GitChanges gives the lines of one commit.
+  params:
+    project: { type: string, description: "The project key." }
+    limit: { type: int, default: 100, description: "How many commits to return, newest first." }
+  cypher: |
+    MATCH (p:GitProject {key: $project})-[:HAS_COMMIT]->(c:GitCommit)
+    WITH c,
+         [k IN ['source', 'test', 'docs', 'build', 'config', 'data', 'other'] WHERE k IN c.fileKinds] AS kinds,
+         [l IN ['Java', 'Kotlin', 'Scala', 'Groovy', 'TypeScript', 'JavaScript', 'Python', 'Go', 'Rust', 'Ruby', 'PHP', 'C#', 'Swift', 'C', 'C++', 'SQL', 'Shell', 'HTML', 'CSS'] WHERE l IN c.languages] AS languages
+    RETURN c.shortSha AS commit, c.authoredAt AS at, c.authorName AS author, c.authorKind AS authorKind, c.title AS title,
+           CASE WHEN c.filesChanged IS NULL THEN 'unknown'
+                WHEN size(kinds) = 0 THEN 'empty'
+                WHEN kinds = ['source'] AND size(languages) = 1 THEN toLower(languages[0])
+                WHEN kinds = ['docs'] THEN 'documentation'
+                WHEN kinds = ['config'] THEN 'configuration'
+                WHEN kinds = ['test'] THEN 'tests'
+                WHEN kinds = ['source', 'test'] THEN 'code and tests'
+                WHEN size(kinds) = 1 THEN kinds[0]
+                ELSE 'mixed' END AS character,
+           kinds, languages, c.filesChanged AS files, c.sha AS sha
+    ORDER BY at DESC
+    LIMIT $limit
+
+- name: GitCharacterMix
+  description: >-
+    SELECT THIS for "how much of the work is documentation versus code", "what do the agents'
+    commits touch compared with people's". How many commits touched each kind of file, by who wrote
+    them (authorKind). A commit that touched two kinds counts under both, so the counts add up to
+    more than the commits; `commits` is the number of that author kind in the window.
+  params:
+    project: { type: string, description: "The project key." }
+  cypher: |
+    MATCH (p:GitProject {key: $project})-[:HAS_COMMIT]->(c:GitCommit)
+    WITH c.authorKind AS authorKind, c,
+         [k IN ['source', 'test', 'docs', 'build', 'config', 'data', 'other'] WHERE k IN c.fileKinds] AS kinds
+    RETURN authorKind, count(c) AS commits,
+           sum(CASE WHEN 'source' IN kinds THEN 1 ELSE 0 END) AS source,
+           sum(CASE WHEN 'test' IN kinds THEN 1 ELSE 0 END) AS test,
+           sum(CASE WHEN 'docs' IN kinds THEN 1 ELSE 0 END) AS docs,
+           sum(CASE WHEN 'config' IN kinds THEN 1 ELSE 0 END) AS config,
+           sum(CASE WHEN 'build' IN kinds THEN 1 ELSE 0 END) AS build
+    ORDER BY commits DESC
+
+- name: GitChanges
+  description: >-
+    SELECT THIS for "what did this commit change", "which files and how many lines". The files one
+    commit changed against its first parent: status, the dev vocabulary's file kind, the language,
+    lines added and removed, and the line ranges it wrote.
+  params:
+    project: { type: string, description: "The project key." }
+    sha: { type: string, description: "The commit's full hash." }
+  cypher: |
+    MATCH (p:GitProject {key: $project})-[:HAS_COMMIT]->(c:GitCommit {sha: $sha})-[:CHANGED]->(f:GitFileChange)
+    RETURN f.path AS path, f.status AS status, f.kind AS kind, f.language AS language,
+           f.additions AS added, f.deletions AS deleted, f.changedLines AS changedLines
+    ORDER BY path
+
+- name: GitBlame
+  description: >-
+    SELECT THIS for "who last changed each part of this file". One file as runs of lines, each with
+    the commit that last changed it: who, when, with whose help, and its message.
+  params:
+    file: { type: string, description: "'<project key>!<path from the repository root>', e.g. 'https://github.com/owner/repo@v2.1!src/main/java/com/acme/Cart.java'." }
+  cypher: |
+    MATCH (f:GitFile {key: $file})-[:HAS_BLAME]->(b:GitBlameRange)
+    RETURN b.startLine AS fromLine, b.endLine AS toLine, b.shortSha AS commit, b.authoredAt AS at,
+           b.authorName AS author, b.authorKind AS authorKind, b.title AS title, b.boundary AS boundary
+    ORDER BY fromLine
+
+- name: GitBlameLine
+  description: >-
+    SELECT THIS for "which change last touched this line", "who wrote line 100 of this file", "the
+    commit behind the line a stack trace names". The one commit that last changed one line of a
+    file: its hash and key (the key realm-github carries on the same commit, for its pull request),
+    who wrote it, when, whether a coding agent helped, and its message. `boundary` true means that
+    commit or an older one beyond the history read.
+  params:
+    file: { type: string, description: "'<project key>!<path from the repository root>'. Read the project at the commit that was running: 'https://github.com/owner/repo@<sha>!src/main/java/...'." }
+    line: { type: int, description: "The line, from 1." }
+  cypher: |
+    MATCH (f:GitFile {key: $file})-[:HAS_BLAME]->(b:GitBlameRange)
+    WHERE b.startLine <= $line AND b.endLine >= $line
+    RETURN b.sha AS sha, b.key AS commitKey, b.authorName AS author, b.authorEmail AS authorEmail,
+           b.authorKind AS authorKind, b.coAuthors AS coAuthors, b.authoredAt AS at, b.title AS title,
+           b.message AS message, b.startLine AS fromLine, b.endLine AS toLine, b.boundary AS boundary,
+           b.sourceUrl AS link

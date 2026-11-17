@@ -1,0 +1,103 @@
+# A git repository's history, read on demand. Nothing in this realm is stored: every node below is
+# VIRTUAL, produced by the appliance's `git` producer kind when a query reaches a repository.
+#
+#   GitProject ─HAS_COMMIT▶ GitCommit ─CHANGED▶ GitFileChange
+#   GitFile    ─HAS_BLAME▶  GitBlameRange
+#
+# A project is pinned by `key`: a repository URL, optionally `@ref`, or a folder holding a `.git`
+# directory. A file is pinned by `<project>!<path>`.
+
+- name: GitProject
+  visibility: internal
+  userAnchor: false
+  description: "A git repository as a project key names it. Pin it as one literal {key:'https://github.com/owner/repo'} (add '@<commit, tag or branch>' to read it there; the default branch otherwise) or {key:'projects/shop'} for a folder that holds a .git directory, and traverse HAS_COMMIT. History is read 2,000 commits deep behind the commit the project is read at."
+  properties:
+    key: { identity: true, description: "The project key. Identity." }
+
+- name: GitFile
+  visibility: internal
+  userAnchor: false
+  description: "One file of a git repository at the commit a project is read at. Pin it as one literal {key:'<project key>!<path from the repository root>'}, e.g. 'https://github.com/owner/repo@v2.1!src/main/java/com/acme/Cart.java', and traverse HAS_BLAME for who last changed each line."
+  properties:
+    key: { identity: true, description: "`<project key>!<path>`. Identity." }
+
+- name: GitCommit
+  parents: [Commit]
+  visibility: internal
+  userAnchor: false
+  description: "One commit of a git repository, read from a clone: its message, author, parents, the co-authors its trailers name, and what it touched by name. A Commit of the dev vocabulary: c.authorKind is 'assisted' when a Co-Authored-By trailer names a coding agent; c.key is '<host>/<owner>/<repo>@<sha>', the key realm-github gives the same commit. Reached from (:GitProject {key})-[:HAS_COMMIT]->, newest first, the last 365 days of the 2,000 commits read. Its files, with lines: CHANGED. `fileKinds` and `languages` characterise it without that hop."
+  properties:
+    id: { identity: true, description: "`<repository>@<sha>`. Identity." }
+    sha: "The commit's full hash."
+    shortSha: "The first seven characters of the hash."
+    repository: "`<host>/<owner>/<repo>` for a clone; the folder as the key gave it for one on disk."
+    project: "The project key the commit was reached from."
+    subject: "The first line of the message."
+    message: "The whole message, trailers included."
+    authorName: "The author's name as git recorded it."
+    authorEmail: "The author's email as git recorded it."
+    authoredAt: "When it was authored, ISO-8601."
+    committerName: "The committer's name."
+    committerEmail: "The committer's email."
+    committedAt: "When it was committed, ISO-8601."
+    coAuthors: { cardinality: LIST, description: "Co-Authored-By trailers, as written." }
+    parents: { cardinality: LIST, description: "Shas of the parent commits." }
+    isMerge: { type: boolean, description: "True when it has more than one parent." }
+    filesChanged: { type: int, description: "Files it touched against its first parent. Empty at the edge of the history read." }
+    paths: { cardinality: LIST, description: "The paths it touched, the first hundred." }
+    extensions: { cardinality: LIST, description: "The file-name extensions it touched, lower case, most files first; a name with no dot is its own (`dockerfile`)." }
+    fileKinds: { cardinality: LIST, description: "The dev vocabulary's file kind of each path in `paths`, in the same order: source, test, docs, build, config, data or other." }
+    languages: { cardinality: LIST, description: "The language of each code extension in `extensions` (Java, Kotlin, TypeScript, ...)." }
+    boundary: { type: boolean, description: "True when the commit is at the edge of the history read: its parents exist and were not fetched." }
+    changesKey: "`<project>!<sha>`: what the CHANGED hop keys on."
+    link: "The commit's page on its host, where the host has one."
+  virtualJoins:
+    - { anchorLabel: GitProject, relationship: HAS_COMMIT, keyField: key, recordKeyField: anchorKey, producer: gitCommits, maxFanoutTotal: 4000,
+        description: "The commits behind the one the project is read at, newest first: `MATCH (p:GitProject {key:$project})-[:HAS_COMMIT]->(c:GitCommit)`." }
+
+- name: GitFileChange
+  parents: [FileChange]
+  visibility: internal
+  userAnchor: false
+  description: "One file as one commit changed it against its first parent: path, status, lines added and removed, the line ranges it wrote, the vocabulary's file kind and the language. A FileChange of the dev vocabulary. Reached from (:GitCommit)-[:CHANGED]->, one read of the clone per commit: narrow the commits first."
+  properties:
+    id: { identity: true, description: "`<repository>@<sha>!<path>`. Identity." }
+    sha: "The commit's hash."
+    commitKey: "`<repository>@<sha>`."
+    fileName: "The file's name."
+    extension: "The file name's extension, lower case; the whole name where it has none."
+    language: "The language of a code file, by its extension; empty otherwise."
+    linesAdded: { type: int, description: "Lines added (also `additions`)." }
+    linesDeleted: { type: int, description: "Lines deleted (also `deletions`)." }
+  virtualJoins:
+    - { anchorLabel: GitCommit, relationship: CHANGED, keyField: changesKey, recordKeyField: anchorKey, producer: gitChanges, maxAnchors: 200, maxFanoutTotal: 20000,
+        description: "The files ONE commit changed, with lines: `MATCH (c:GitCommit {sha:$sha})-[:CHANGED]->(f:GitFileChange)` under a pinned project." }
+
+- name: GitBlameRange
+  visibility: internal
+  userAnchor: false
+  description: "A run of consecutive lines of one file that one commit last changed, with that commit: who wrote it, when, its message, its co-authors and authorKind. Reached from (:GitFile {key:'<project>!<path>'})-[:HAS_BLAME]->. The line a stack trace names falls in exactly one range: `WHERE b.startLine <= $line AND b.endLine >= $line`. `boundary` true means that commit or an older one, beyond the history read."
+  properties:
+    id: { identity: true, description: "`<repository>@<commit read>!<path>#<startLine>`. Identity." }
+    path: "The file, from the repository root."
+    startLine: { type: int, description: "First line of the range, from 1." }
+    endLine: { type: int, description: "Last line of the range, inclusive." }
+    lines: { type: int, description: "How many lines the range holds." }
+    sha: "The commit that last changed these lines."
+    shortSha: "The first seven characters of that hash."
+    key: "`<host>/<owner>/<repo>@<sha>`, lower-case repository: the dev vocabulary's Commit key, which realm-github carries on the same commit."
+    commitKey: "`<repository>@<sha>` as git spells the repository."
+    title: "The first line of that commit's message."
+    message: "Its whole message."
+    authorName: "Who wrote it."
+    authorEmail: "Their email as git recorded it."
+    authoredAt: "When, ISO-8601."
+    authorKind: { type: string, description: "human, bot, agent or assisted, by the dev vocabulary's rule over what git records.", values: [human, bot, agent, assisted] }
+    coAuthors: { cardinality: LIST, description: "Co-Authored-By trailers, as written." }
+    sourcePath: "The file's name when that commit wrote the lines, where it has been renamed since."
+    atSha: "The commit the file was read at."
+    boundary: { type: boolean, description: "True when the commit is at the edge of the history read." }
+    sourceUrl: "The commit's page on its host, where the host has one."
+  virtualJoins:
+    - { anchorLabel: GitFile, relationship: HAS_BLAME, keyField: key, recordKeyField: anchorKey, producer: gitBlame, maxFanoutTotal: 20000,
+        description: "Who last changed each line: `MATCH (f:GitFile {key:$file})-[:HAS_BLAME]->(b:GitBlameRange)`." }
