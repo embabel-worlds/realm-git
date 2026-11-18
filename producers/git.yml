@@ -40,6 +40,7 @@
 - name: gitChanges
   kind: git
   emit: changes
+  cache: { kind: ttl, seconds: 86400 }   # a commit's own diff never changes
   compute:
     subjectKey: "toLower(r.commitKey)"
     subjectKind: "'commit'"
@@ -55,6 +56,11 @@
 - name: gitBlame
   kind: git
   emit: blame
+  # As deep as gitHistory reads, so a blame does not answer differently after a history question has
+  # deepened the clone: a line older than the history read is given the oldest commit read (and the
+  # engine says so), and how many lines that is must not depend on what was asked first.
+  maxCommits: 50000
+  cache: { kind: ttl, seconds: 600 }       # a key at a commit never changes; one on a branch moves when it is pushed to
   compute:
     key: "toLower(r.repository) + '@' + r.sha"
     title: "r.subject"
@@ -69,7 +75,8 @@
 - name: gitHistory
   kind: git
   emit: history
-  maxCommits: 20000        # a method's history is only whole if the walk reaches the commit that wrote it; a commit that did not touch the file costs one lookup
+  maxCommits: 50000        # a method's history is only whole if the walk reaches the commit that wrote it; a commit that did not touch the file costs one lookup. 20,000 cut spring-framework's (36,000 commits) short
+  cache: { kind: ttl, seconds: 600 }
   compute:
     key: "toLower(r.repository) + '@' + r.sha"
     title: "r.subject"
