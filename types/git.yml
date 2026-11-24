@@ -34,6 +34,15 @@
   visibility: internal
   userAnchor: false
   description: "One commit of a git repository, read from a clone: its message, author, parents, the co-authors its trailers name, and what it touched by name. A Commit of the dev vocabulary: c.authorKind is 'assisted' when a Co-Authored-By trailer names a coding agent; c.key is '<host>/<owner>/<repo>@<sha>', the key realm-github gives the same commit. Reached from (:GitProject {key})-[:HAS_COMMIT]->, newest first, the last 365 days of the 2,000 commits read. Its files, with lines: CHANGED. `fileKinds` and `languages` characterise it without that hop."
+  examples:
+    # Pin the project, narrow the commits, then hop CHANGED: one clone read per commit reached.
+    - q: "which files did the agent-assisted commits in acme/shop change since October"
+      cypher: |
+        MATCH (p:GitProject {key: 'https://github.com/acme/shop'})-[:HAS_COMMIT]->(c:GitCommit)
+        WHERE c.authorKind IN ['assisted', 'agent'] AND c.authoredAt >= '2026-10-01'
+        MATCH (c)-[:CHANGED]->(f:GitFileChange)
+        RETURN c.shortSha AS commit, c.title AS title, f.path AS path, f.additions AS added, f.deletions AS deleted
+        ORDER BY commit, path
   properties:
     id: { identity: true, description: "`<repository>@<sha>`. Identity." }
     sha: "The commit's full hash."
@@ -44,10 +53,10 @@
     message: "The whole message, trailers included."
     authorName: "The author's name as git recorded it."
     authorEmail: "The author's email as git recorded it."
-    authoredAt: "When it was authored, ISO-8601."
-    committerName: "The committer's name."
-    committerEmail: "The committer's email."
-    committedAt: "When it was committed, ISO-8601."
+    authoredAt: "The git author date: when the change was first written, ISO-8601 date-time in UTC (2026-11-05T09:30:00Z)."
+    committerName: "Who applied the commit, as git recorded it: differs from the author after a rebase, a cherry-pick or a merge made on a forge's web page."
+    committerEmail: "The committer's email as git recorded it; a forge's web merges use its own no-reply address (noreply@github.com)."
+    committedAt: "The git committer date, ISO-8601 date-time in UTC; later than authoredAt after a rebase, cherry-pick or amend."
     coAuthors: { cardinality: LIST, description: "Co-Authored-By trailers, as written." }
     agentEvidence: "What made the commit `assisted`: `trailer` (a Co-Authored-By naming an agent) or `message` (the message says an agent suggested, generated or wrote it). Empty otherwise."
     changeRequestNumber: { type: int, description: "The pull request that brought the commit in, read from its title: the `(#123)` a squash merge appends, or `Merge pull request #123`. Empty when the title names none. With repositoryKey it is the ChangeRequest's key, `<repositoryKey>#<number>`." }
@@ -69,12 +78,12 @@
   parents: [FileChange]
   visibility: internal
   userAnchor: false
-  description: "One file as one commit changed it against its first parent: path, status, lines added and removed, the line ranges it wrote, the vocabulary's file kind and the language. A FileChange of the dev vocabulary. Reached from (:GitCommit)-[:CHANGED]->, one read of the clone per commit: narrow the commits first."
+  description: "One file as one commit changed it against its first parent, identified by id `<repository>@<sha>!<path>`: path, status, lines added and removed, the line ranges it wrote, the vocabulary's file kind and the language. A FileChange of the dev vocabulary. Reached from (:GitCommit)-[:CHANGED]->, one read of the clone per commit: narrow the commits first."
   properties:
     id: { identity: true, description: "`<repository>@<sha>!<path>`. Identity." }
     sha: "The commit's hash."
     commitKey: "`<repository>@<sha>`."
-    fileName: "The file's name."
+    fileName: "The last segment of the path: the file name without its directories (Cart.java)."
     extension: "The file name's extension, lower case; the whole name where it has none."
     language: "The language of a code file, by its extension; empty otherwise."
     linesAdded: { type: int, description: "Lines added (also `additions`)." }
@@ -87,6 +96,12 @@
   visibility: internal
   userAnchor: false
   description: "A run of consecutive lines of one file that one commit last changed, with that commit: who wrote it, when, its message, its co-authors and authorKind. Reached from (:GitFile {key:'<project>!<path>'})-[:HAS_BLAME]->. The line a stack trace names falls in exactly one range: `WHERE b.startLine <= $line AND b.endLine >= $line`. `boundary` true means that commit or an older one, beyond the history read."
+  examples:
+    - q: "who last changed line 120 of src/main/java/com/acme/Cart.java in acme/shop"
+      cypher: |
+        MATCH (f:GitFile {key: 'https://github.com/acme/shop!src/main/java/com/acme/Cart.java'})-[:HAS_BLAME]->(b:GitBlameRange)
+        WHERE b.startLine <= 120 AND b.endLine >= 120
+        RETURN b.sha AS sha, b.authorName AS author, b.authorKind AS authorKind, b.authoredAt AS at, b.title AS title
   properties:
     id: { identity: true, description: "`<repository>@<commit read>!<path>#<startLine>`. Identity." }
     path: "The file, from the repository root."
@@ -101,7 +116,7 @@
     message: "Its whole message."
     authorName: "Who wrote it."
     authorEmail: "Their email as git recorded it."
-    authoredAt: "When, ISO-8601."
+    authoredAt: "The git author date of that commit, ISO-8601 date-time in UTC (2026-11-05T09:30:00Z)."
     authorKind: { type: string, description: "human, bot, agent or assisted, by the dev vocabulary's rule over what git records.", values: [human, bot, agent, assisted] }
     coAuthors: { cardinality: LIST, description: "Co-Authored-By trailers, as written." }
     sourcePath: "The file's name when that commit wrote the lines, where it has been renamed since."
@@ -116,6 +131,13 @@
   visibility: internal
   userAnchor: false
   description: "One commit that changed a run of lines, with that commit: who wrote it, when, its message, its co-authors and authorKind, and how many of those lines it added and removed. Reached from (:GitLines {key:'<project>!<path>#<from>-<to>'})-[:HAS_CHANGE]->, newest first, back to the commit that first wrote the lines (`created`). The lines are followed through the edits that moved them and a rename of the file, along the first parent: on a branch that takes merge commits, a change is reported at the merge that brought it in. Counting these rows is how often a method changed; GitBlameRange says only who last changed each line."
+  examples:
+    # How often a method changed is a count of HAS_CHANGE rows, not of blame ranges.
+    - q: "how many times have lines 40 to 72 of Cart.java in acme/shop changed, and by whom"
+      cypher: |
+        MATCH (l:GitLines {key: 'https://github.com/acme/shop!src/main/java/com/acme/Cart.java#40-72'})-[:HAS_CHANGE]->(c:GitLineChange)
+        RETURN c.authorName AS author, count(*) AS changes, max(c.authoredAt) AS lastChange
+        ORDER BY changes DESC
   properties:
     id: { identity: true, description: "`<repository>@<commit read>!<path>#<from>-<to>@<sha>`. Identity." }
     sha: "The commit."
@@ -125,7 +147,7 @@
     message: "Its whole message."
     authorName: "Who wrote it."
     authorEmail: "Their email as git recorded it."
-    authoredAt: "When, ISO-8601."
+    authoredAt: "The git author date of that commit, ISO-8601 date-time in UTC (2026-11-05T09:30:00Z)."
     authorKind: { type: string, description: "human, bot, agent or assisted, by the dev vocabulary's rule over what git records.", values: [human, bot, agent, assisted] }
     coAuthors: { cardinality: LIST, description: "Co-Authored-By trailers, as written." }
     agentEvidence: "What made the commit `assisted`: `trailer` or `message`. Empty otherwise."
@@ -134,7 +156,7 @@
     toLine: { type: int, description: "Where they ended there." }
     linesAdded: { type: int, description: "Lines the commit wrote among them." }
     linesDeleted: { type: int, description: "Lines the commit removed from among them." }
-    created: { type: boolean, description: "True on the commit that first wrote the lines." }
+    created: { type: boolean, description: "True on the commit that first wrote the lines (a flag, not a date); false on every later change." }
     complete: { type: boolean, description: "False when the walk ended where the history read ends, before the commit that wrote the lines: there are earlier changes this does not count. Empty on an appliance that does not report it." }
     boundary: { type: boolean, description: "True when the commit is at the edge of the history read." }
     atSha: "The commit the lines were read at."
