@@ -13,23 +13,52 @@ SHA = "b02ef8960b1b961b09dd1308f0a13f10fc3e6d4d"     # v0.1.0
 PROJECT = f"{REPO}@{SHA}"
 HDR = {"Authorization": "Basic " + base64.b64encode(AUTH.encode()).decode(), "Content-Type": "application/json"}
 
+# A view's own word on whether its rows are the whole answer. A PARTIAL outcome is still SUCCEEDED,
+# so rows read on status alone (or on `data` being there) count a short answer as the realm's: a
+# source that failed under load, or a capped page, reads as drift.
+SHORT_PUBLIC = ("PARTIAL", "REDUCTION_FAILED", "COMPUTE_FAILED", "PROPERTY_NOT_STORED",
+                "AGENTIC_DEGRADED", "RATE_LIMITED", "SOURCE_UNAVAILABLE", "SOURCE_REJECTED",
+                "INVALID_FILTER", "UNPUSHED_FILTER", "TOO_BROAD", "FETCH_CAPPED",
+                "INDEX_UNAVAILABLE", "ARGUMENT_REFUSED")
+
+
+def short(body, figure=None):
+    """None when the view says its answer is whole; else the line a check prints in place of the
+    figure: `REFUSED: <why>` or `PARTIAL <figure>: <the engine's reason>`."""
+    tag = "PARTIAL" if figure is None else f"PARTIAL {figure}"
+    if body.get("status") != "SUCCEEDED":
+        return f"REFUSED: {body.get('status')} {json.dumps(body.get('error'))[:200]}"
+    ws = [w for w in body.get("warnings") or [] if isinstance(w, dict) and w.get("code") in SHORT_PUBLIC]
+    if body.get("outcome") not in ("OK", "EMPTY") or ws:
+        return f"{tag}: " + (f"{ws[0]['code']}: {ws[0].get('message', '')}" if ws else f"outcome {body.get('outcome')}")[:200]
+    return None
+
+
 failures = 0
+last_short = None  # what the latest view said about its own rows; the checks that follow read them
+
+
 def check(name, expected, actual):
     global failures
-    if expected == actual:
+    if last_short:
+        failures += 1
+        print(f"  FAIL {name}: expected {str(expected)[:300]}, got {last_short}")
+    elif expected == actual:
         print(f"  ok   {name} = {str(expected)[:100]}")
     else:
         failures += 1
         print(f"  FAIL {name}: expected {str(expected)[:300]}, got {str(actual)[:300]}")
 
 def view(name, args):
+    global last_short
     req = urllib.request.Request(f"{APPLIANCE}/api/v1/views/{name}/invoke",
                                  json.dumps({"args": args}).encode(), HDR)
     with urllib.request.urlopen(req, timeout=600) as r:
         body = json.load(r)
     if "data" not in body:
         raise SystemExit(f"view {name} answered without data: {json.dumps(body)[:500]}")
-    return body["data"]
+    last_short = short(body, len(body["data"] or []))
+    return body["data"] or []
 
 work = tempfile.mkdtemp()
 git_dir = os.path.join(work, "repo.git")
