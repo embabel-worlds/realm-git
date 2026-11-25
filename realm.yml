@@ -19,7 +19,7 @@ description: |
   links to its pull request: both carry the same `key`.
 
   Requires realm-dev-vocabulary and the appliance's `git` producer kind.
-version: 0.1.3
+version: 0.1.4
 maturity: experimental
 url: https://github.com/embabel-worlds/realm-git
 author: Rod Johnson
